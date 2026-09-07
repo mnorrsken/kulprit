@@ -56,8 +56,10 @@ falling back to `$(go env GOPATH)/bin`, which is often not on `PATH` by default.
 kubectl kulprit completion zsh     # or bash, or fish
 ```
 
-That installs the small helper `kubectl` needs, next to the binary, and tells
-you what your shell still wants. Then:
+That installs the small helper the CLI needs, next to the binary, and tells you
+what your shell still wants. One helper is installed for `kubectl` and one for
+any compatible CLI found on `PATH` — `oc` today — because each looks for a
+helper named after itself. `--for <cli>` picks them by hand. Then:
 
 ```
 kubectl kulprit <TAB>                          resource types
@@ -74,6 +76,10 @@ out what to filter by.
 `--print` writes the helper to stdout instead of installing it, for packagers
 who would rather place it themselves.
 
+It works under `oc` as well as `kubectl`: `oc` runs `kubectl-*` plugins, and if
+`kubectl` is not installed at all kulprit falls back to running `oc` for the
+`get` underneath. `KUBECTL` overrides that choice.
+
 ### Why a file, and not a sourced function
 
 `kubectl` completes a plugin by looking for an executable called
@@ -88,6 +94,13 @@ empty so sourcing it out of habit does nothing.
 The helper is a symlink to the plugin binary, which answers to that name
 directly; where symlinks are unavailable it falls back to the two-line shell
 script that other plugins ship.
+
+The name is built from the CLI's own root command, not from the plugin's
+filename — kubectl takes the command path `kubectl kulprit`, turns the space
+into a dash and the first dash into `_complete-`. So `kubectl` looks for
+`kubectl_complete-kulprit` and `oc` looks for `oc_complete-kulprit`, even though
+both run the same `kubectl-kulprit` binary. That is why one helper per CLI is
+installed.
 
 ## Use
 

@@ -2,6 +2,7 @@ package complete
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -110,50 +111,92 @@ func TestFlagsHaveDescriptions(t *testing.T) {
 	}
 }
 
-func TestInstallWritesAHelperKubectlCanRun(t *testing.T) {
+func TestHelperNameFollowsTheCLI(t *testing.T) {
+	// kubectl builds the helper name from its own root command, not from the
+	// plugin's filename, so oc looks for a different file even though it runs
+	// the same kubectl-kulprit binary.
+	tests := map[string]string{
+		"kubectl": "kubectl_complete-kulprit",
+		"oc":      "oc_complete-kulprit",
+	}
+	for cli, want := range tests {
+		if got := HelperName(cli); got != want {
+			t.Errorf("HelperName(%q) = %q, want %q", cli, got, want)
+		}
+		if !IsHelperName(want) {
+			t.Errorf("IsHelperName(%q) = false, want true", want)
+		}
+	}
+	for _, notOurs := range []string{"kubectl-kulprit", "_complete-kulprit", "kubectl_complete-other", ""} {
+		if IsHelperName(notOurs) {
+			t.Errorf("IsHelperName(%q) = true, want false", notOurs)
+		}
+	}
+}
+
+func TestDefaultCLIsAlwaysIncludesKubectl(t *testing.T) {
+	clis := DefaultCLIs()
+	if len(clis) == 0 || clis[0] != "kubectl" {
+		t.Fatalf("DefaultCLIs() = %v, want kubectl first", clis)
+	}
+	for _, cli := range clis[1:] {
+		if _, err := exec.LookPath(cli); err != nil {
+			t.Errorf("DefaultCLIs() offered %q, which is not on PATH", cli)
+		}
+	}
+}
+
+func TestInstallWritesAHelperTheCLICanRun(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "kubectl-kulprit")
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	path, kind, err := Install(dir, binary)
-	if err != nil {
-		t.Fatalf("Install: %v", err)
+	// Installing for two CLIs has to leave two separate helpers behind.
+	for _, cli := range []string{"kubectl", "oc"} {
+		path, kind, err := Install(dir, binary, cli)
+		if err != nil {
+			t.Fatalf("Install(%s): %v", cli, err)
+		}
+		if want := filepath.Join(dir, HelperName(cli)); path != want {
+			t.Errorf("installed at %s, want %s", path, want)
+		}
+		if kind != "symlink" && kind != "script" {
+			t.Errorf("kind = %q, want symlink or script", kind)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if info.Mode().Perm()&0o111 == 0 {
+			t.Errorf("%s is not executable (mode %v)", path, info.Mode())
+		}
+		// Installing again must replace it rather than fail, which is what
+		// happens on every upgrade.
+		if _, _, err := Install(dir, binary, cli); err != nil {
+			t.Fatalf("second Install(%s): %v", cli, err)
+		}
 	}
-	if want := filepath.Join(dir, HelperName); path != want {
-		t.Errorf("installed at %s, want %s", path, want)
-	}
-	if kind != "symlink" && kind != "script" {
-		t.Errorf("kind = %q, want symlink or script", kind)
-	}
-
-	// Whatever form it took, kubectl has to find it as an executable file.
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
-	if info.Mode().Perm()&0o111 == 0 {
-		t.Errorf("%s is not executable (mode %v)", path, info.Mode())
-	}
-
-	// Installing again must replace it rather than fail, which is what
-	// happens on every upgrade.
-	if _, _, err := Install(dir, binary); err != nil {
-		t.Fatalf("second Install: %v", err)
+	for _, cli := range []string{"kubectl", "oc"} {
+		if _, err := os.Lstat(filepath.Join(dir, HelperName(cli))); err != nil {
+			t.Errorf("helper for %s is missing after installing both: %v", cli, err)
+		}
 	}
 }
 
-func TestHelperScriptIsRunnableShell(t *testing.T) {
-	s := HelperScript()
-	if !strings.HasPrefix(s, "#!") {
-		t.Error("helper has no shebang, so it cannot be exec'd")
-	}
-	if !strings.Contains(s, "__complete") {
-		t.Error("helper does not call __complete")
-	}
-	if !strings.HasSuffix(s, "\n") {
-		t.Error("helper does not end in a newline")
+func TestHelperScriptIsRunnableShellForItsCLI(t *testing.T) {
+	for _, cli := range []string{"kubectl", "oc"} {
+		s := HelperScript(cli)
+		if !strings.HasPrefix(s, "#!") {
+			t.Errorf("%s helper has no shebang, so it cannot be exec'd", cli)
+		}
+		if !strings.Contains(s, "exec "+cli+" "+PluginName+" __complete") {
+			t.Errorf("%s helper does not invoke %s: %q", cli, cli, s)
+		}
+		if !strings.HasSuffix(s, "\n") {
+			t.Errorf("%s helper does not end in a newline", cli)
+		}
 	}
 }
 
@@ -168,17 +211,17 @@ func TestOnPath(t *testing.T) {
 	}
 }
 
-func TestNotesNameTheShellAndThePath(t *testing.T) {
+func TestNotesWarnOnlyWhenOffPath(t *testing.T) {
 	for _, shell := range append(Shells, "") {
-		got := Notes(shell, "/bin/kubectl_complete-kulprit", "/bin", true)
-		if !strings.Contains(got, "/bin/kubectl_complete-kulprit") {
-			t.Errorf("Notes(%q) does not say where it installed", shell)
-		}
-		if strings.Contains(got, "not on PATH") {
+		if got := Notes(shell, []string{"kubectl"}, "/bin", true); strings.Contains(got, "not on PATH") {
 			t.Errorf("Notes(%q) warned about PATH when the directory was on it", shell)
 		}
 	}
-	if !strings.Contains(Notes("zsh", "/x", "/x", false), "not on PATH") {
+	if !strings.Contains(Notes("zsh", []string{"kubectl"}, "/x", false), "not on PATH") {
 		t.Error("Notes did not warn when the directory was off PATH")
+	}
+	// The example should be written for the CLI actually being set up.
+	if got := Notes("zsh", []string{"oc"}, "/x", true); !strings.Contains(got, "oc kulprit") {
+		t.Errorf("Notes for oc does not mention \"oc kulprit\": %q", got)
 	}
 }

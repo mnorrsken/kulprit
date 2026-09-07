@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 )
 
 // Reported wraps a failure that kubectl has already explained on stderr, so the
@@ -19,13 +20,21 @@ type Reported struct {
 func (e *Reported) Error() string { return fmt.Sprintf("kubectl exited with status %d", e.Code) }
 
 // Binary is the kubectl to run. KUBECTL overrides it, which is handy when the
-// plugin runs against a wrapper such as kubectl-oidc.
-func Binary() string {
+// plugin runs against a wrapper such as kubectl-oidc. Failing that it falls
+// back to oc, so the plugin works on an OpenShift machine that has no kubectl
+// installed; oc accepts the same "get -o json" and completes the same way.
+var Binary = sync.OnceValue(func() string {
 	if b := os.Getenv("KUBECTL"); b != "" {
 		return b
 	}
+	for _, candidate := range []string{"kubectl", "oc"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	// Nothing found; name kubectl so the failure says so.
 	return "kubectl"
-}
+})
 
 // Get runs "kubectl get" with the caller's arguments and returns the JSON it
 // wrote. managedFields are requested explicitly because kubectl has stripped

@@ -2,6 +2,22 @@
 
 All notable changes to kulprit are recorded here.
 
+## [0.2.1] - 2026-09-07
+
+### Fixed
+
+- Completion did not work under `oc`. The CLI builds the helper's name from its
+  own root command, so `oc` looks for `oc_complete-kulprit` while only
+  `kubectl_complete-kulprit` was ever installed. `completion` now installs one
+  helper per CLI: kubectl always, plus any compatible CLI found on PATH.
+  `--for <cli>` names them by hand.
+
+### Added
+
+- kulprit falls back to running `oc` when there is no `kubectl` on PATH, so it
+  works on a machine that only has the OpenShift CLI. `KUBECTL` still overrides
+  the choice.
+
 ## [0.2.0] - 2026-09-07
 
 ### Added

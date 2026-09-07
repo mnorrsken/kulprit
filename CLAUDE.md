@@ -44,11 +44,22 @@ asking for `source <(... completion zsh)` to register a function; it cannot
 work. The alternative, wrapping kubectl's own completion function, means
 hardcoding `__start_kubectl` / `_kubectl` and losing to whoever sources last.
 
-`kulprit completion [bash|zsh|fish]` installs the helper next to the binary as a
-symlink, which the binary recognises by `os.Args[0]` and serves directly; a
-script is the fallback. Nothing is written to stdout, so sourcing the command
-out of habit is harmless. `--print` emits the script form for packagers. The
-release ships only the binaries; nothing else needs packaging.
+The helper's name comes from the CLI's root Cobra command, not from the plugin
+filename: `lookupCompletionExec` in kubectl's `plugin_completion.go` takes
+`cmd.CommandPath()` ("kubectl kulprit"), swaps the space for a dash and the
+first dash for `_complete-`. `oc` sets `Use: "oc"` and accepts the `kubectl`
+plugin prefix, so it runs the same binary but looks for `oc_complete-kulprit`.
+One helper per CLI is therefore installed; `complete.DefaultCLIs` is kubectl
+plus any compatible CLI on PATH.
+
+`kulprit completion [bash|zsh|fish]` installs them next to the binary as
+symlinks, which the binary recognises by the shape of `os.Args[0]` and serves
+directly; a script is the fallback. Nothing is written to stdout, so sourcing
+the command out of habit is harmless. `--print` emits the script form for
+packagers. The release ships only the binaries; nothing else needs packaging.
+
+`kubectl.Binary` falls back to `oc` when there is no `kubectl` on PATH, so the
+plugin works on an OpenShift-only machine. `KUBECTL` overrides it.
 
 `internal/complete.Flags` is the list the shell is offered. It has to stay in
 step with `parse` in `cmd/kubectl-kulprit/main.go`, and

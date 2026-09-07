@@ -44,13 +44,12 @@ func invocation() string {
 	return base
 }
 
-// completionHelperName is the executable name kubectl runs to complete
-// "kubectl kulprit". Installing the binary under this name as well is all the
-// setup completion needs.
-const completionHelperName = "kubectl_complete-kulprit"
-
+// isCompletionHelper reports whether we were run under one of the helper
+// names, which is how the symlink installed by "completion" works. The name
+// varies by CLI - kubectl_complete-kulprit, oc_complete-kulprit - so match the
+// shape rather than one spelling.
 func isCompletionHelper() bool {
-	return filepath.Base(os.Args[0]) == completionHelperName
+	return complete.IsHelperName(filepath.Base(os.Args[0]))
 }
 
 type options struct {
@@ -205,7 +204,7 @@ func isColorMode(s string) bool {
 	return s == "auto" || s == "always" || s == "never"
 }
 
-// installCompletion puts the completion helper next to this binary. kubectl
+// installCompletion puts the completion helper next to this binary. The CLI
 // looks for it by name on PATH and runs it as a program, so it has to exist as
 // a file; there is no way to register it from the shell.
 //
@@ -215,23 +214,43 @@ func isColorMode(s string) bool {
 func installCompletion(argv []string) error {
 	shell := ""
 	print := false
-	for _, arg := range argv {
-		switch arg {
-		case "--print":
+	var clis []string
+
+	for i := 0; i < len(argv); i++ {
+		arg := argv[i]
+		name, value, attached := strings.Cut(arg, "=")
+		switch {
+		case arg == "--print":
 			print = true
-		case "bash", "zsh", "fish":
+		case name == "--for":
+			if !attached {
+				if i+1 >= len(argv) {
+					return fmt.Errorf("--for needs a CLI name")
+				}
+				i++
+				value = argv[i]
+			}
+			clis = append(clis, value)
+		case arg == "bash", arg == "zsh", arg == "fish":
 			shell = arg
-		case "-h", "--help":
+		case arg == "-h", arg == "--help":
 			usage(os.Stdout)
 			return nil
 		default:
-			return fmt.Errorf("completion takes %s or --print, got %q",
+			return fmt.Errorf("completion takes %s, --for <cli> or --print, got %q",
 				strings.Join(complete.Shells, ", "), arg)
 		}
 	}
 
+	// Without --for, install for kubectl and for any kubectl-compatible CLI
+	// that is actually on this machine, since each looks for a helper named
+	// after itself.
+	if len(clis) == 0 {
+		clis = complete.DefaultCLIs()
+	}
+
 	if print {
-		_, err := io.WriteString(os.Stdout, complete.HelperScript())
+		_, err := io.WriteString(os.Stdout, complete.HelperScript(clis[0]))
 		return err
 	}
 
@@ -240,14 +259,18 @@ func installCompletion(argv []string) error {
 		return fmt.Errorf("finding this binary: %w", err)
 	}
 	dir := filepath.Dir(binary)
-	path, kind, err := complete.Install(dir, binary)
-	if err != nil {
-		return err
+	for _, cli := range clis {
+		path, kind, err := complete.Install(dir, binary, cli)
+		if err != nil {
+			return err
+		}
+		if kind == "symlink" {
+			fmt.Fprintf(os.Stderr, "installed %s -> %s\n", path, filepath.Base(binary))
+		} else {
+			fmt.Fprintf(os.Stderr, "installed %s\n", path)
+		}
 	}
-	if kind == "symlink" {
-		fmt.Fprintf(os.Stderr, "%s -> %s\n", complete.HelperName, filepath.Base(binary))
-	}
-	_, err = io.WriteString(os.Stderr, complete.Notes(shell, path, dir, complete.OnPath(dir)))
+	_, err = io.WriteString(os.Stderr, complete.Notes(shell, clis, dir, complete.OnPath(dir)))
 	return err
 }
 
@@ -295,10 +318,12 @@ Flags:
 
 Shell completion:
   %[1]s completion [bash|zsh|fish]
-                             Install the helper kubectl needs to complete this
-                             plugin, next to this binary. Name your shell to be
-                             told what else it wants. --print writes the helper
-                             to stdout instead, for packagers.
+                             Install the helper the CLI needs to complete this
+                             plugin, next to this binary. One is installed for
+                             kubectl and one for any compatible CLI found on
+                             PATH, such as oc, since each looks for a helper
+                             named after itself. --for <cli> picks them by hand;
+                             --print writes the helper to stdout, for packagers.
 
 Examples:
   %[1]s deployment argocd-server -n argocd

@@ -274,28 +274,58 @@ func emit(w io.Writer, lines []string, directive int) error {
 	return err
 }
 
-// HelperName is the executable kubectl runs to complete "kubectl kulprit". The
-// lookup happens inside the kubectl process, so it has to be a real file on
-// PATH: a shell function is invisible to it, whatever the shell exports.
-const HelperName = "kubectl_complete-kulprit"
+// PluginName is how kulprit is invoked as a plugin: "kubectl kulprit".
+const PluginName = "kulprit"
 
-// helperScript is the helper in the form every other plugin ships it, used
-// where a symlink cannot be made and by --print for packagers.
-const helperScript = `#!/usr/bin/env sh
-# kubectl runs this when completing "kubectl kulprit ...". Hand the words it
-# passes to the plugin's own completion.
-exec kubectl kulprit __complete "$@"
-`
+// HelperName is the executable cli looks for when completing this plugin.
+//
+// kubectl builds the name from its own root command, not from the plugin's
+// filename: it takes the command path ("kubectl kulprit"), turns the space into
+// a dash and the first dash into "_complete-". So kubectl looks for
+// kubectl_complete-kulprit and oc, whose root command is "oc", looks for
+// oc_complete-kulprit — even though both run the very same kubectl-kulprit
+// binary, since oc accepts the "kubectl" plugin prefix as well as its own.
+// One helper per CLI is therefore needed.
+func HelperName(cli string) string { return cli + "_complete-" + PluginName }
 
-// HelperScript returns the shell form of the helper.
-func HelperScript() string { return helperScript }
+// IsHelperName reports whether this is one of our helper names, whichever CLI
+// it was installed for.
+func IsHelperName(base string) bool {
+	return strings.HasSuffix(base, "_complete-"+PluginName) && len(base) > len("_complete-"+PluginName)
+}
 
-// Install puts the completion helper in dir. It prefers a symlink to the
-// plugin binary, which answers to the helper name directly and saves running a
-// shell and a second kubectl, and falls back to the script where symlinks are
-// not available. It reports the path written and which of the two it used.
-func Install(dir, binary string) (path, kind string, err error) {
-	path = filepath.Join(dir, HelperName)
+// kubectlCompatible are the CLIs that run kubectl plugins and look for their
+// own completion helper. kubectl is always installed for; the rest only when
+// they are actually on the machine.
+var kubectlCompatible = []string{"oc"}
+
+// DefaultCLIs is kubectl plus every kubectl-compatible CLI found on PATH.
+func DefaultCLIs() []string {
+	clis := []string{"kubectl"}
+	for _, cli := range kubectlCompatible {
+		if _, err := exec.LookPath(cli); err == nil {
+			clis = append(clis, cli)
+		}
+	}
+	return clis
+}
+
+// HelperScript is the helper in the form other plugins ship it, used where a
+// symlink cannot be made and by --print for packagers.
+func HelperScript(cli string) string {
+	return "#!/usr/bin/env sh\n" +
+		"# " + cli + " runs this when completing \"" + cli + " " + PluginName + " ...\".\n" +
+		"# Hand the words it passes to the plugin's own completion.\n" +
+		"exec " + cli + " " + PluginName + " __complete \"$@\"\n"
+}
+
+// Install puts the completion helper for cli in dir. It prefers a symlink to
+// the plugin binary, which answers to any helper name directly and saves
+// running a shell and a second process, and falls back to the script where
+// symlinks are not available. It reports the path written and which form it
+// used.
+func Install(dir, binary, cli string) (path, kind string, err error) {
+	path = filepath.Join(dir, HelperName(cli))
 
 	// A file under this name is ours by definition, so replacing it is safe;
 	// it has to go first either way, since a symlink cannot be overwritten.
@@ -306,7 +336,7 @@ func Install(dir, binary string) (path, kind string, err error) {
 	if err := os.Symlink(binary, path); err == nil {
 		return path, "symlink", nil
 	}
-	if err := os.WriteFile(path, []byte(helperScript), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(HelperScript(cli)), 0o755); err != nil {
 		return "", "", fmt.Errorf("writing %s: %w", path, err)
 	}
 	return path, "script", nil
@@ -315,30 +345,29 @@ func Install(dir, binary string) (path, kind string, err error) {
 // Notes is what the user still has to do for the shell they named, written for
 // a person rather than for eval. Callers put it on stderr, so that sourcing
 // this command by habit does nothing rather than something surprising.
-func Notes(shell, path, dir string, onPath bool) string {
+func Notes(shell string, clis []string, dir string, onPath bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "installed %s\n", path)
 	if !onPath {
-		fmt.Fprintf(&b, "\nwarning: %s is not on PATH, so kubectl will not find it.\n", dir)
+		fmt.Fprintf(&b, "\nwarning: %s is not on PATH, so the helper will not be found.\n", dir)
 	}
 	switch shell {
 	case "bash":
-		b.WriteString("\nbash also needs kubectl's own completion loaded:\n" +
+		b.WriteString("\nbash also needs the CLI's own completion loaded:\n" +
 			"    source <(kubectl completion bash)\n" +
 			"and bash-completion v2 on bash 4.4 or newer; the bash 3.2 that ships\n" +
 			"with macOS is not enough.\n")
 	case "zsh":
-		b.WriteString("\nzsh also needs kubectl's own completion loaded:\n" +
+		b.WriteString("\nzsh also needs the CLI's own completion loaded:\n" +
 			"    source <(kubectl completion zsh)\n")
 	case "fish":
-		b.WriteString("\nfish also needs kubectl's own completion loaded:\n" +
+		b.WriteString("\nfish also needs the CLI's own completion loaded:\n" +
 			"    kubectl completion fish | source\n")
 	case "":
-		b.WriteString("\nkubectl's own completion has to be loaded for your shell; see\n" +
+		b.WriteString("\nThe CLI's own completion has to be loaded for your shell; see\n" +
 			"    kubectl completion --help\n")
 	}
-	b.WriteString("\nThen \"kubectl kulprit <TAB>\" completes resources, names, flags, and\n" +
-		"the field managers of the object for -m.\n")
+	fmt.Fprintf(&b, "\nThen \"%s %s <TAB>\" completes resources, names, flags, and the\n"+
+		"field managers of the object for -m.\n", clis[0], PluginName)
 	return b.String()
 }
 
