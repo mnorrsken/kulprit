@@ -79,6 +79,12 @@ jobs:
 
           kubectl runs any \`kubectl-*\` binary on PATH as a plugin, so that is all
           \`kubectl kulprit\` needs.
+
+          For shell completion, let the plugin install the helper kubectl needs:
+
+          \`\`\`sh
+          kubectl kulprit completion zsh    # or bash, or fish
+          \`\`\`
           NOTES
 
       - name: Create release

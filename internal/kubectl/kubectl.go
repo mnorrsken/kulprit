@@ -30,7 +30,15 @@ func Binary() string {
 // Get runs "kubectl get" with the caller's arguments and returns the JSON it
 // wrote. managedFields are requested explicitly because kubectl has stripped
 // them from its own output since 1.21, and they are the whole point here.
-func Get(args []string) ([]byte, error) {
+// Anything kubectl says on stderr is passed on to ours.
+func Get(args []string) ([]byte, error) { return get(args, true) }
+
+// GetQuiet is Get with kubectl's stderr swallowed, for callers that must not
+// write to the terminal. Shell completion is one: a warning printed while the
+// user is pressing Tab lands in the middle of their command line.
+func GetQuiet(args []string) ([]byte, error) { return get(args, false) }
+
+func get(args []string, passStderr bool) ([]byte, error) {
 	full := append([]string{"get"}, args...)
 	full = append(full, "--output=json", "--show-managed-fields")
 
@@ -44,14 +52,16 @@ func Get(args []string) ([]byte, error) {
 		if msg == "" {
 			return nil, fmt.Errorf("running %s: %w", Binary(), err)
 		}
-		os.Stderr.WriteString(msg)
+		if passStderr {
+			os.Stderr.WriteString(msg)
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return nil, &Reported{Code: exit.ExitCode()}
 		}
 		return nil, &Reported{Code: 1}
 	}
-	if msg := stderr.String(); msg != "" {
+	if msg := stderr.String(); msg != "" && passStderr {
 		os.Stderr.WriteString(msg)
 	}
 	return stdout.Bytes(), nil

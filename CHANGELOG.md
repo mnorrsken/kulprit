@@ -2,6 +2,30 @@
 
 All notable changes to kulprit are recorded here.
 
+## [0.2.0] - 2026-09-07
+
+### Added
+
+- Shell completion. `kubectl kulprit completion [bash|zsh|fish]` installs the
+  helper kubectl needs, next to the binary, and says what the shell still
+  wants. `kubectl kulprit <TAB>` then completes resource types, names,
+  namespaces and flags.
+- Completing `-m/--manager` offers the field managers of the object on the
+  command line, read from its `managedFields`.
+- `completion --print` writes the helper to stdout for packagers.
+
+### Notes
+
+- Releases still contain only the four binaries. The completion helper is
+  created on the machine by the command above, not shipped, so it works however
+  the plugin was installed.
+
+### Fixed
+
+- `--color never` written as two words was not parsed: the value was passed to
+  `kubectl get` as if it were a resource name. Both `--color never` and
+  `--color=never` work now, and a bare `--color` still means `always`.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added

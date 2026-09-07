@@ -27,6 +27,8 @@ It is a `kubectl` plugin: run it as `kubectl kulprit`.
   output parses as ordinary YAML.
 - **Every `kubectl get` flag works** — `-n`, `-A`, `-l`, `--context` and the
   rest are passed straight through.
+- **Tab completion** — resources, names and flags, plus the field managers of
+  the object you are looking at when you complete `-m`.
 - **No dependencies** — standard library only, a ~3 MB static binary.
 
 ## Install
@@ -44,12 +46,48 @@ make install     # go install, into $GOBIN
 Binaries for linux and macOS on amd64 and arm64 are attached to each
 [release](https://github.com/mnorrsken/kulprit/releases).
 
-`kubectl` finds any `kubectl-*` binary on `PATH`, so with `$GOBIN` on `PATH`
-the plugin is ready:
+Whichever way you install, the directory has to be on `PATH` — that is how
+`kubectl` discovers plugins. `make install` and `go install` use `go env GOBIN`,
+falling back to `$(go env GOPATH)/bin`, which is often not on `PATH` by default.
+
+## Completion
 
 ```sh
-kubectl kulprit deployment argocd-server -n argocd
+kubectl kulprit completion zsh     # or bash, or fish
 ```
+
+That installs the small helper `kubectl` needs, next to the binary, and tells
+you what your shell still wants. Then:
+
+```
+kubectl kulprit <TAB>                          resource types
+kubectl kulprit deploy <TAB>                   deployment names
+kubectl kulprit deploy web -n <TAB>            namespaces
+kubectl kulprit deploy web --<TAB>             kulprit's flags and kubectl get's
+kubectl kulprit deploy web -n prod -m <TAB>    the field managers of that object
+```
+
+The last one is the useful one: it reads the object's `managedFields` and offers
+the managers actually on it, so you do not have to run the command once to find
+out what to filter by.
+
+`--print` writes the helper to stdout instead of installing it, for packagers
+who would rather place it themselves.
+
+### Why a file, and not a sourced function
+
+`kubectl` completes a plugin by looking for an executable called
+`kubectl_complete-<plugin>` on `PATH` and running it. That lookup happens inside
+the `kubectl` process, not in your shell: your shell's completion for `kubectl`
+runs `kubectl __complete kulprit ...`, and the Go binary then searches `PATH`
+for a real file. A shell function is invisible to it, `export -f` included, so
+`source <(kubectl kulprit completion zsh)` cannot register one — which is why
+that command installs a file and writes its report to stderr, leaving stdout
+empty so sourcing it out of habit does nothing.
+
+The helper is a symlink to the plugin binary, which answers to that name
+directly; where symlinks are unavailable it falls back to the two-line shell
+script that other plugins ship.
 
 ## Use
 
@@ -123,7 +161,7 @@ same managers as the line above it.
 
 | Flag | Meaning |
 | --- | --- |
-| `--color=auto\|always\|never` | Colour the output. `auto` colours only when stdout is a terminal and `NO_COLOR` is unset. |
+| `--color auto\|always\|never` | Colour the output. `auto` colours only when stdout is a terminal and `NO_COLOR` is unset. Takes `=` or a separate word; bare `--color` means `always`. |
 | `--no-color` | Same as `--color=never`. |
 | `--no-legend` | Drop the manager list above each object. |
 | `--annotate` / `--no-annotate` | Force the `# manager` comments on or off. On by default when colour is off. |
@@ -174,6 +212,9 @@ object. From that:
 make build test vet
 make dist            # linux and darwin, amd64 and arm64, into dist/
 ```
+
+`make install` installs the binary and then runs `kubectl-kulprit completion`
+to put the helper beside it.
 
 The YAML emitter is hand-written so that every line can be tied back to the
 field it came from. It was validated against a live cluster by printing every
