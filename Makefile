@@ -14,7 +14,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
 endif
 
-.PHONY: build run test vet fmt install dist clean
+.PHONY: build run test vet fmt vuln install dist clean
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o bin/$(BIN) ./cmd/$(BIN)
@@ -31,6 +31,9 @@ vet:
 fmt:
 	gofmt -l -w .
 
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
 # install puts the plugin and its completion helper on $GOBIN (or $GOPATH/bin),
 # which is where kubectl looks for both. With that on PATH, "kubectl kulprit"
 # works and so does completing it.
@@ -38,7 +41,7 @@ install:
 	go install -ldflags '$(LDFLAGS)' ./cmd/$(BIN)
 	@'$(GOBIN)/$(BIN)' completion
 
-dist:
+dist: vuln
 	@mkdir -p dist
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; \
